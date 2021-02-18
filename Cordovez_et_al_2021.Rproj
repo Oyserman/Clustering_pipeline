@@ -1,13 +1,610 @@
-Version: 1.0
+######
+###### Create clusters based on the pearson correlation and the Louvain Clustering algorithm using CSS normalized ASV
+######
+library("igraph")
+library("ggpubr")
+library("tidyverse")
 
-RestoreWorkspace: Default
-SaveWorkspace: Default
-AlwaysSaveHistory: Default
+# read in the CSS normalized abundance table and corresponding taxonomy
+r_CSS <- read.table("/mnt/nfs/bioinfdata/ngs2/ME2/raaijmakers_group/beno/Recycling_nerwork_2020/CSS_no_zero.txt", sep ="\t", header = TRUE)
+taxonomy_table <- read.table("/mnt/nfs/bioinfdata/ngs2/ME2/raaijmakers_group/Recycling_network_2020/Clustering/taxonomy_filt_EFF.txt", sep="\t", header=TRUE)
+iszero <- function(x) {sum(x == 0)}
+num_zeros_total <- apply(r_CSS[,-1], 1, iszero)
 
-EnableCodeIndexing: Yes
-UseSpacesForTab: Yes
-NumSpacesForTab: 2
-Encoding: UTF-8
 
-RnwWeave: Sweave
-LaTeX: pdfLaTeX
+# Figure S1, No zero counts in the data?
+barplot(table(num_zeros_total), ylim = c(0,120), main ="number of zero counts", xlab = "number of zeros", ylab = "# of ASV with zero count", las = 1)
+
+# our first column is the ASV names. This is a problem because it is non-numeric. To fix this we will first name all the rows as the ASV and then delete that column
+# change rownames
+rownames(r_CSS) <- as.character(r_CSS[,1])
+# remove the first column
+r_CSS <- r_CSS[,-1]
+
+# We are interested in looking for different patterns between Modern (Moneymaker, M) and Wild tomato (Pimpinellifolium, P)
+# Split the single table into to M and P, but include the bulk samples for both as they are the control
+
+# which columns correspond to each treatment.
+Bulk_columns <- c(1:4)
+Money_columns <- c(5:8,13:16,21:24,29:32)
+
+# Subset the tables into M and P
+M_r_CSS <- r_CSS[,c(Bulk_columns,Money_columns)]
+P_r_CSS <- r_CSS[,-Money_columns]
+
+# Calculate the averages for the bulk and money.
+# Here we 'hack' the calculations but this could be turned into a function / loop
+
+bulk_M_ave <- matrix(NA,nrow=5,ncol=dim(M_r_CSS)[1])
+bulk_M_ave[1,] <- apply(M_r_CSS[,1:4],1,ave)[1,]
+bulk_M_ave[2,] <- apply(M_r_CSS[,5:8],1,ave)[1,]
+bulk_M_ave[3,] <- apply(M_r_CSS[,9:12],1,ave)[1,]
+bulk_M_ave[4,] <- apply(M_r_CSS[,13:16],1,ave)[1,]
+bulk_M_ave[5,] <- apply(M_r_CSS[,17:20],1,ave)[1,]
+colnames(bulk_M_ave) <- rownames(M_r_CSS)
+
+bulk_P_ave <- matrix(NA,nrow=5,ncol=dim(P_r_CSS)[1])
+bulk_P_ave[1,] <- apply(P_r_CSS[,1:4],1,ave)[1,]
+bulk_P_ave[2,] <- apply(P_r_CSS[,5:8],1,ave)[1,]
+bulk_P_ave[3,] <- apply(P_r_CSS[,9:12],1,ave)[1,]
+bulk_P_ave[4,] <- apply(P_r_CSS[,13:16],1,ave)[1,]
+bulk_P_ave[5,] <- apply(P_r_CSS[,17:20],1,ave)[1,]
+colnames(bulk_P_ave) <- rownames(P_r_CSS)
+
+# Visualize and do a sanity check that our averages are indeed averages
+par(mfrow=c(1,2))
+
+plot(as.numeric(P_r_CSS[1,]) ~ c(rep(0,4),rep(1,4),rep(2,4),rep(3,4),rep(4,4)), ylab = "CSS", xlab = "cycle", main ="ASV1")
+lines(as.numeric(bulk_P_ave[,1]) ~ c(0,1,2,3,4), ylab = "CSS", xlab = "cycle", main ="ASV1",col="red")
+
+plot(as.numeric(P_r_CSS[2,]) ~ c(rep(0,4),rep(1,4),rep(2,4),rep(3,4),rep(4,4)), ylab = "CSS", xlab = "cycle", main ="ASV2")
+lines(as.numeric(bulk_P_ave[,2]) ~ c(0,1,2,3,4), ylab = "CSS", xlab = "cycle", main ="ASV2",col="red")
+
+#
+
+bulk_all_ave <- rbind(bulk_M_ave, bulk_P_ave[-1,])
+
+# Remove ASV with too many zeros. Those ASV with a median count of 0 were removed. Of the 1271, 724 ASV were removed, leaving 547 ASV
+
+dev.off()
+num_zeros_in_exp <- apply(bulk_all_ave, 2, iszero)
+plot(apply(bulk_all_ave,2,mean) ~ num_zeros_in_exp, pch = 19, cex = apply(bulk_all_ave,2,sum)/max(apply(bulk_all_ave,2,sum))*1.5, col = rgb(0,0,1, alpha = 0.20), xlim = c(0,10), ylim =c(0,10), ylab = "mean CSS log2 abundance", xlab = "number of zero counts")
+abline(v=4.5, col = "red", lty = 2)
+
+text(x = 9, y = 9.5, paste((which(apply(bulk_all_ave,2,median)==0) %>% length()), "ASV median = 0"), cex = 0.75)
+text(x = 3, y = 9.5, paste(dim(bulk_all_ave)[2] - (which(apply(bulk_all_ave,2,median)==0) %>% length()), "ASV median > 0"), cex = 0.75)
+
+# bulk_present_ave_median <- bulk_all_ave[,-which(apply(bulk_all_ave,2,median)==0)]
+# bulk_present_ave <- bulk_all_ave[,!(num_zeros_in_exp>=7)]
+bulk_present_ave <- bulk_all_ave
+bulk_present_ave_1 <- bulk_all_ave[,(num_zeros_in_exp<=7)]
+bulk_present_ave_2 <- bulk_all_ave[,(num_zeros_in_exp<=6)]
+bulk_present_ave_3 <- bulk_all_ave[,(num_zeros_in_exp<=5)]
+bulk_present_ave_4 <- bulk_all_ave[,(num_zeros_in_exp<=4)]
+
+# bulk_min_ave <- bulk_all_ave[,which(apply(bulk_all_ave,2,sum) >= (mean(bulk_all_ave) * 9))]
+# bulk_min_max <- bulk_all_ave[,which(apply(bulk_all_ave,2,max) >= 2)]
+
+# par(mfrow=c(1,3))
+# plot(apply(bulk_all_ave,2,mean) ~ num_zeros_in_exp, pch = 19, cex = apply(bulk_all_ave,2,mean)/2.5, col = rgb(0,0,1, alpha = 0.20), xlim = c(0,10), ylab = "mean CSS log2 abundance", xlab = "number of zero counts", main = "all")
+# plot(apply(bulk_min_ave,2,mean) ~ num_zeros_in_exp[which(apply(bulk_all_ave,2,max) >= 2)], pch = 19, cex = apply(bulk_min_ave,2,mean)/2.5, col = rgb(0,0,1, alpha = 0.20), xlim = c(0,10), ylab = "mean CSS log2 abundance", xlab = "number of zero counts", main = "max")
+# plot(apply(bulk_present_ave,2,mean) ~ num_zeros_in_exp[-which(apply(bulk_all_ave,2,median)==0)], pch = 19, cex = apply(bulk_present_ave,2,mean)/2.5, col = rgb(0,0,1, alpha = 0.20), xlim = c(0,10), ylab = "mean CSS log2 abundance", xlab = "number of zero counts", main = "# zeros")
+
+# Now that we have averages for each cycle, we will proceed with identifying clusters of ASV that share the same patterns
+
+################## clustering analysis ##################
+
+make_adjacency_matrix <- function(ave_ab_matrix, correlation) {
+
+  if (!exists("correlation")) {
+    correlation = 0.9
+  }
+
+  stdev <- apply(ave_ab_matrix, 2, sd)
+  pos_zero_sd <- which(stdev == 0)
+
+  if (length(pos_zero_sd)>0) {
+    ave_ab_matrix_no_zero_sd <- ave_ab_matrix[,-pos_zero_sd]
+  } else {
+    ave_ab_matrix_no_zero_sd <- ave_ab_matrix
+  }
+
+  ave_ab_matrix_cor <- cor(ave_ab_matrix_no_zero_sd)
+
+  adjacency_matrix_cor <- matrix(data=0, ncol=dim(ave_ab_matrix_cor)[2], nrow=dim(ave_ab_matrix_cor)[1])
+
+  if (correlation > 0) {
+    adjacency_matrix_cor[which(ave_ab_matrix_cor > correlation)] <- 1
+    colnames(adjacency_matrix_cor) <- colnames(ave_ab_matrix_no_zero_sd)
+    rownames(adjacency_matrix_cor) <- colnames(ave_ab_matrix_no_zero_sd)
+
+  } else {
+    adjacency_matrix_cor[which(ave_ab_matrix_cor < correlation)] <- 1
+    colnames(adjacency_matrix_cor) <- colnames(ave_ab_matrix_no_zero_sd)
+    rownames(adjacency_matrix_cor) <- colnames(ave_ab_matrix_no_zero_sd)
+
+  }
+
+  return(adjacency_matrix_cor)
+}
+
+
+make_edge_list <- function(df) {
+  df[lower.tri(df, diag = TRUE)] <- 0
+  edges <- which(df !=0, arr.ind = T)
+  edge_list <- cbind(rownames(df)[as.numeric(edges[,1])],colnames(df)[as.numeric(edges[,2])])
+  return(edge_list)
+}
+
+
+# determine a cut-off using bulk_present_ave, the median filtered data
+# bulk_present_ave
+# no filtering
+bulk_M_ave_present <- bulk_present_ave[c(1:5),]
+bulk_P_ave_present <- bulk_present_ave[c(1,6:9),]
+# filter by 1 zero
+bulk_M_ave_present_1 <- bulk_present_ave_1[c(1:5),]
+bulk_P_ave_present_1 <- bulk_present_ave_1[c(1,6:9),]
+# filter by 2 zero
+bulk_M_ave_present_2 <- bulk_present_ave_2[c(1:5),]
+bulk_P_ave_present_2 <- bulk_present_ave_2[c(1,6:9),]
+# filter by 3 zero
+bulk_M_ave_present_3 <- bulk_present_ave_3[c(1:5),]
+bulk_P_ave_present_3 <- bulk_present_ave_3[c(1,6:9),]
+# filter by 4 zero
+bulk_M_ave_present_4 <- bulk_present_ave_4[c(1:5),]
+bulk_P_ave_present_4 <- bulk_present_ave_4[c(1,6:9),]
+
+calc_num_of_edges <- function (matrix, sequence) {
+num_of_edges <- NULL
+for (i in sequence) {
+  num_of_edges <- c(num_of_edges, dim(make_edge_list(make_adjacency_matrix(matrix, correlation = i)))[1])
+}
+return (num_of_edges)
+}
+
+
+num_of_edges_M <- calc_num_of_edges(bulk_M_ave_present, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+num_of_edges_P <- calc_num_of_edges(bulk_P_ave_present, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+
+num_of_edges_M_1 <- calc_num_of_edges(bulk_M_ave_present_1, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+num_of_edges_P_1 <- calc_num_of_edges(bulk_P_ave_present_1, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+
+num_of_edges_M_2 <- calc_num_of_edges(bulk_M_ave_present_2, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+num_of_edges_P_2 <- calc_num_of_edges(bulk_P_ave_present_2, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+
+num_of_edges_M_3 <- calc_num_of_edges(bulk_M_ave_present_3, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+num_of_edges_P_3 <- calc_num_of_edges(bulk_P_ave_present_3, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+
+num_of_edges_M_4 <- calc_num_of_edges(bulk_M_ave_present_4, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+num_of_edges_P_4 <- calc_num_of_edges(bulk_P_ave_present_4, c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+
+
+
+par(mfrow=c(1,5))
+dev.off()
+plot(log(num_of_edges_M,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), ylim = c(9,18), xlim =c(0.75,1), pch = 19, col = "blue", cex = 0.75, ylab = "log(number of edges,2)", xlab = "Pearson Correlation", main = "Sensitivity Analysis")
+lines(log(num_of_edges_M,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "blue", cex = 0.75)
+points(log(num_of_edges_P,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 17, col = "blue", cex = 0.75)
+lines(log(num_of_edges_P,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "blue", cex = 0.75)
+# 
+# points(log(num_of_edges_M_1,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 19, col = "blue", cex = 0.75)
+# lines(log(num_of_edges_M_1,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "blue", cex = 0.75)
+# points(log(num_of_edges_P_1,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 17, col = "blue", cex = 0.75)
+# lines(log(num_of_edges_P_1,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "blue", cex = 0.75)
+# 
+# points(log(num_of_edges_M_2,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 19, col = "blue", cex = 0.5)
+# lines(log(num_of_edges_M_2,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "black", cex = 0.5)
+# points(log(num_of_edges_P_2,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 19, col = "green", cex = 0.5)
+# lines(log(num_of_edges_P_2,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "black", cex = 0.5)
+# 
+# points(log(num_of_edges_M_3,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 19, col = "blue", cex = 0.5)
+# lines(log(num_of_edges_M_3,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "black", cex = 0.5)
+# points(log(num_of_edges_P_3,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 19, col = "green", cex = 0.5)
+# lines(log(num_of_edges_P_3,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "black", cex = 0.5)
+
+points(log(num_of_edges_M_4,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 19, col = "blue", cex = 0.75)
+lines(log(num_of_edges_M_4,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "blue", cex = 0.75)
+points(log(num_of_edges_P_4,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), pch = 17, col = "blue", cex = 0.75)
+lines(log(num_of_edges_P_4,2) ~ c(seq(from = 0.75, to = 0.95, by = 0.05),0.99), col = "blue", cex = 0.75)
+
+abline(v= 0.85, lty = 2, col = "red")
+
+
+sens_a_M <- cbind(num_of_edges_M,num_of_edges_M_1,num_of_edges_M_2,num_of_edges_M_3,num_of_edges_M_4) %>% as.data.frame()
+sens_a_P <- cbind(num_of_edges_P,num_of_edges_P_1,num_of_edges_P_2,num_of_edges_P_3,num_of_edges_P_4) %>% as.data.frame()
+rownames(sens_a_M) <- c(seq(from = 0.75, to = 0.95, by = 0.05),0.99)
+rownames(sens_a_P) <- c(seq(from = 0.75, to = 0.95, by = 0.05),0.99)
+
+# All ASV, ASV >=2 0,
+
+# SOME STATISTICS #
+
+num_ASV_M <- c(dim(bulk_M_ave_present)[2],dim(bulk_M_ave_present_1)[2],dim(bulk_M_ave_present_2)[2],dim(bulk_M_ave_present_3)[2],dim(bulk_M_ave_present_4)[2])
+num_ASV_P <- c(dim(bulk_P_ave_present)[2],dim(bulk_P_ave_present_1)[2],dim(bulk_P_ave_present_2)[2],dim(bulk_P_ave_present_3)[2],dim(bulk_P_ave_present_4)[2])
+
+EN_M <- sens_a_M / num_ASV_M
+EN_P <- sens_a_P / num_ASV_P
+
+sens_a_M_per <- sens_a_M / max(sens_a_M)
+sens_a_P_per <- sens_a_P / max(sens_a_P)
+
+# dev.off()
+########################### ########################### ###########################
+########################### Start Analaysis              ###########################
+########################### ########################### ###########################
+
+bulk_P_am <- make_adjacency_matrix(bulk_P_ave_present, correlation = 0.85)
+bulk_M_am <- make_adjacency_matrix(bulk_M_ave_present, correlation = 0.85)
+
+bulk_P_el <- make_edge_list(bulk_P_am)
+bulk_M_el <- make_edge_list(bulk_M_am)
+
+# cluster with abundant ASV
+
+graph_M <- graph_from_edgelist(bulk_M_el, directed = FALSE)
+graph_P <- graph_from_edgelist(bulk_P_el, directed = FALSE)
+
+louvain_clusters_M <- cluster_louvain(graph_M, weights = NULL)
+louvain_clusters_P <- cluster_louvain(graph_P, weights = NULL)
+
+
+######### ######### ######### ######### ######### ######### ######### ######### ######### ######### #########
+######### Figures
+######### ######### ######### ######### ######### ######### ######### ######### ######### ######### #########
+
+table(louvain_clusters_M$membership)
+
+dev.off()
+par(mfrow=c(2,5))
+plot(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[1]])],1, sum), ylab = "sum CSS", main = "M, cluster 1", ylim = c(0,1000))
+plot(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[2]])],1, sum), ylab = "sum CSS", main = "M, cluster 2", ylim = c(0,1000))
+plot(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[3]])],1, sum), ylab = "sum CSS", main = "M, cluster 3", ylim = c(0,1000))
+plot(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[4]])],1, sum), ylab = "sum CSS", main = "M, cluster 4", ylim = c(0,1000))
+# plot(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[5]])],1, sum), ylab = "sum CSS", main = "M, cluster 5", ylim = c(0,1000))
+# plot(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[6]])],1, sum), ylab = "sum CSS", main = "M, cluster 6", ylim = c(0,1000))
+
+table(louvain_clusters_P$membership)
+plot.new()
+
+# par(mfrow=c(2,5))
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[1]])],1, sum), ylab = "sum CSS", main = "P, cluster 1", ylim = c(0,1000))
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[2]])],1, sum), ylab = "sum CSS", main = "P, cluster 2", ylim = c(0,1000))
+# plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[3]])],1, sum), ylab = "sum CSS", main = "P, cluster 3", ylim = c(0,1000))
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[4]])],1, sum), ylab = "sum CSS", main = "P, cluster 4", ylim = c(0,1000))
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[5]])],1, sum), ylab = "mean CSS", main = "P, cluster 5", ylim = c(0,1000))
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[6]])],1, sum), ylab = "sum CSS", main = "P, cluster 6", ylim = c(0,1000))
+# plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[7]])],1, sum), ylab = "sum CSS", main = "P, cluster 7", ylim = c(0,1000))
+
+# The number of ASV that are in this:
+length(unique(c(colnames(bulk_P_am),colnames(bulk_M_am))))
+# 1271
+
+
+
+
+##############################
+########## Figure 1 ##########
+##############################
+
+# Figure 1 Identify 3 main patterns, Bulk, Late Succesional Rhizosphere, and Transient Rhizosphere
+# Bulk: Modern-cluster 4, Wild-cluster 1, 4
+# Early Succesional: Modern - cluster 1, Wild - cluster 5
+# Late Succesional: Modern - cluster 2, Wild-cluster 2
+
+# Other - Cluster 3, Wild cluster 6
+
+par(mfrow=c(3,1), mar = c(2,4,4,2))
+# Bulk: Modern-cluster 4, Wild-cluster 1, 4
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% c(louvain_clusters_P[[1]],louvain_clusters_P[[4]]))],1, sum), ylab = "sum CSS", main = "Bulk", ylim = c(0,1200), col = "red", las = 1)
+lines(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% c(louvain_clusters_P[[1]],louvain_clusters_P[[4]]))],1, sum), ylab = "sum CSS", col = "red")
+points(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[4]])],1, sum), ylab = "sum CSS", main = "Modern\n Bulk (C4)", col = "black")
+lines(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[4]])],1, sum), ylab = "sum CSS", main = "Modern\n Bulk (C4)", col = "black")
+legend("topright", 1000, legend=c("Wild", "Modern"),
+       col=c("red","black"), lty=1, pch = 1, bty = "n")
+
+# Early Succesional: Modern - cluster 1, Wild - cluster 5
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[5]])],1, sum), ylab = "sum CSS", main = "ESR", ylim = c(0,1200), col = "red", las = 1)
+lines(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[5]])],1, sum), ylab = "sum CSS", col = "red")
+
+points(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[1]])],1, sum), ylab = "sum CSS", col = "black")
+lines(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[1]])],1, sum), ylab = "sum CSS", col = "black")
+
+# Late Succesional: Modern - cluster 2, Wild-cluster 2
+plot(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[2]])],1, sum), ylab = "sum CSS", main = "LSR", ylim = c(0,1200), col = "red", las = 1)
+lines(apply(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% louvain_clusters_P[[2]])],1, sum), ylab = "sum CSS", col = "red")
+
+points(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[2]])],1, sum), ylab = "sum CSS", col = "black")
+lines(apply(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% louvain_clusters_M[[2]])],1, sum), ylab = "sum CSS", col = "black")
+
+
+# Figure 1 Identify 3 main patterns, Bulk, Late Succesional Rhizosphere, and Transient Rhizosphere
+# Bulk: Modern-cluster 4, Wild-cluster 1, 4
+# Early Succesional: Modern - cluster 1, Wild - cluster 5
+# Late Succesional: Modern - cluster 2, Wild-cluster 2
+
+Wild_B <- c(louvain_clusters_P[[1]], louvain_clusters_P[[4]])
+Wild_ESR <- louvain_clusters_P[[5]]
+Wild_LSR <- louvain_clusters_P[[2]]
+
+Modern_B <- louvain_clusters_M[[4]]
+Modern_ESR <- louvain_clusters_M[[1]]
+Modern_LSR <- louvain_clusters_M[[2]]
+
+### LSR statistics
+total_LSR <- unique(c(Wild_LSR, Modern_LSR), incomparables=TRUE)
+overlap_LSR <- intersect(Wild_LSR,Modern_LSR)
+M_unique_LSR <- Modern_LSR[!Modern_LSR %in% overlap_LSR]
+P_unique_LSR <- Wild_LSR[!Wild_LSR %in% overlap_LSR]
+
+length(overlap_LSR) + length(M_unique_LSR) + length(P_unique_LSR)
+length(total_LSR)
+
+### Bulk statistics
+total_B <- unique(c(Wild_B, Modern_B), incomparables=TRUE)
+overlap_B <- intersect(Wild_B,Modern_B)
+M_unique_B <- Modern_B[!Modern_B %in% overlap_B]
+P_unique_B <- Wild_B[!Wild_B %in% overlap_B]
+
+length(overlap_B) + length(M_unique_B) + length(P_unique_B)
+length(total_B)
+
+### ESR statistics
+total_ESR <- unique(c(Wild_ESR, Modern_ESR), incomparables=TRUE)
+overlap_ESR <- intersect(Wild_ESR,Modern_ESR)
+M_unique_ESR <- Modern_ESR[!Modern_ESR %in% overlap_ESR]
+P_unique_ESR <- Wild_ESR[!Wild_ESR %in% overlap_ESR]
+
+length(overlap_ESR) + length(M_unique_ESR) + length(P_unique_ESR)
+length(total_ESR)
+
+
+length(total_B)
+length(total_ESR)
+length(total_LSR)
+
+length(overlap_B)
+length(overlap_ESR)
+length(overlap_LSR)
+
+
+length(overlap_B) / length(total_B)
+length(overlap_ESR) / length(total_ESR)
+length(overlap_LSR) / length(total_LSR)
+
+length(Wild_ESR)
+length(overlap_ESR) + length(P_unique_ESR)
+
+length(Wild_B)
+length(overlap_B) + length(P_unique_B)
+
+length(Wild_LSR)
+length(overlap_LSR) + length(P_unique_LSR)
+
+
+# intersect(total_ESR, total_B) %>% length
+# [1] 109
+# intersect(total_LSR, total_B) %>% length
+# [1] 4
+# intersect(total_LSR, total_ESR) %>% length
+# [1] 22
+
+
+##############################
+########## Figure 2 ##########
+##############################
+
+par(mfrow=c(3,2), mar=c(2,4,4,2))
+plot(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% Modern_LSR)]), xlab = "Cycle", ylab = "Sum CSS", main = "LSR ASVs\nMoneymaker", ylim =c(0, 1200), pch = 19)
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% Modern_LSR)]), lty=1)
+points(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% overlap_LSR)]), pch =19, col="black")
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% overlap_LSR)]), lty = 2, col = "black")
+points(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% M_unique_LSR)]), pch =19, col = "black")
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% M_unique_LSR)]), col = "black", lty = 3)
+legend("topleft", 1000, legend=c("Total", "Overlapping", "Unique"),
+       col=c("black","black","black"), lty=1:3, pch = 19, bty = "n")
+
+plot(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% Wild_LSR)]), xlab = "Cycle", ylab = "Sum CSS", main = "LSR ASVs\nPimpinellifolium", ylim =c(0, 1200), pch=19, col = "red")
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% Wild_LSR)]), lty=1, col = "red")
+points(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% overlap_LSR)]), col="red", pch =19)
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% overlap_LSR)]), lty=2, col="red")
+points(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% P_unique_LSR)]), pch =19, col = "red")
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% P_unique_LSR)]), col = "red", lty = 3)
+
+legend("topleft", 1000, legend=c("Total", "Overlapping", "Unique"),
+       col=c("red","red","red"), lty=1:3, pch = 19, bty = "n")
+
+plot(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% Modern_ESR)]), xlab = "Cycle", ylab = "Sum CSS", main = "ESR ASVs\nMoneymaker", ylim =c(0, 1200), pch = 19)
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% Modern_ESR)]), lty=1)
+points(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% overlap_ESR)]), pch =19, col="black")
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% overlap_ESR)]), lty = 2, col = "black")
+points(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% M_unique_ESR)]), pch =19, col = "black")
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% M_unique_ESR)]), col = "black", lty = 3)
+
+plot(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% Wild_ESR)]), xlab = "Cycle", ylab = "Sum CSS", main = "ESR ASVs\nPimpinellifolium", ylim =c(0, 1000), pch=19, col = "red")
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% Wild_ESR)]), lty=1, col = "red")
+points(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% overlap_ESR)]), col="red", pch =19)
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% overlap_ESR)]), lty=2, col="red")
+points(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% P_unique_ESR)]), pch =19, col = "red")
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% P_unique_ESR)]), col = "red", lty = 3)
+
+plot(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% Modern_B)]), xlab = "Cycle", ylab = "Sum CSS", main = "Bulk ASVs\nMoneymaker", ylim =c(0, 1200), pch = 19)
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% Modern_B)]), lty=1)
+points(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% overlap_B)]), pch =19, col="black")
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% overlap_B)]), lty = 2, col = "black")
+points(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% M_unique_B)]), pch =19, col = "black")
+lines(rowSums(bulk_M_ave_present[,which(colnames(bulk_M_ave_present) %in% M_unique_B)]), col = "black", lty = 3)
+
+plot(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% Wild_B)]), xlab = "Cycle", ylab = "Sum CSS", main = "Bulk ASVs\nPimpinellifolium", ylim =c(0, 1200), pch=19, col = "red")
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% Wild_B)]), lty=1, col = "red")
+points(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% overlap_B)]), col="red", pch =19)
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% overlap_B)]), lty=2, col="red")
+points(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% P_unique_B)]), pch =19, col = "red")
+lines(rowSums(bulk_P_ave_present[,which(colnames(bulk_P_ave_present) %in% P_unique_B)]), col = "red", lty = 3)
+
+
+####################
+### LSR statistics
+
+# Now I will make an attribute tabel
+# CODES
+# B = BULK
+# LSR = LATE SUCCESSSIONAL
+# ESR = EARLY SUCCESSSIONAL
+# LSR_M = LATE SUCCESIONAL Solanum lycopersicum var Moneymaker
+# ESR_M = EARLY SUCCESIONAL Solanum lycopersicum var Moneymaker
+# LSR_P = LATE SUCCESIONAL Solanum pimpinellifolium
+# ESR_P = EARLY SUCCESIONAL Solanum pimpinellifolium
+
+attribute_table <- matrix(NA, nrow = dim(bulk_present_ave_4)[2], ncol = 2)
+attribute_table <- matrix(NA, nrow = dim(bulk_present_ave)[2], ncol = 2)
+
+attribute_table[,1] <- c(colnames(bulk_present_ave))
+
+#BULK, overlap_B, M_unique_B, P_unique_B
+attribute_table[which(attribute_table[,1] %in% total_B),2] <- "B"
+#ESR, overlap_ESR, M_unique_ESR, P_unique_ESR
+attribute_table[which(attribute_table[,1] %in% overlap_ESR),2] <- "ESR"
+attribute_table[which(attribute_table[,1] %in% M_unique_ESR),2] <- "ESR_M"
+attribute_table[which(attribute_table[,1] %in% P_unique_ESR),2] <- "ESR_P"
+
+#LATE SUCCESSIONAL, overlap_LSR, M_unique_LSR, P_unique_LSR
+attribute_table[which(attribute_table[,1] %in% overlap_LSR),2] <- "LSR"
+attribute_table[which(attribute_table[,1] %in% M_unique_LSR),2] <- "LSR_M"
+attribute_table[which(attribute_table[,1] %in% P_unique_LSR),2] <- "LSR_P"
+
+# Sanity check
+attribute_table[which(attribute_table[,2] == "LSR"),]
+colnames(attribute_table) <- c("ASV_ID", "Ecology")
+attribute_table<-as.data.frame(attribute_table)
+attribute_table_reduced <- attribute_table[!is.na(attribute_table$Ecology),]
+
+# make a dataframe with the CSS values
+t_bulk_all_ave_reduced <- t(bulk_all_ave[,!is.na(attribute_table$Ecology)])
+colnames(t_bulk_all_ave_reduced) <- c("Bulk","M1","M2","M3","M4","P1","P2","P3","P4")
+t_bulk_all_ave_reduced <- as.data.frame(t_bulk_all_ave_reduced)
+t_bulk_all_ave_reduced$ASV_ID <- rownames(t_bulk_all_ave_reduced)
+attribute_table_merged <- merge(t_bulk_all_ave_reduced, attribute_table_reduced)
+
+# Merge with taxonomy
+attribute_table_tax_merged <- merge(attribute_table_merged, taxonomy_table, by="ASV_ID")
+
+
+write.table(attribute_table_tax_merged, file="/mnt/nfs/bioinfdata/ngs2/ME2/raaijmakers_group/beno/attribute_table_LSR_ESR_B_CSS.txt", quote=FALSE, row.names=FALSE, col.names=TRUE)
+
+
+# Create network using only nodes with a
+# median value was greater than zero (<= 4 zeros)
+# num_of_edges_ALL <- calc_num_of_edges(t(r_CSS), c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+
+num_of_edges_median_zero <- calc_num_of_edges(bulk_present_ave_4[,colnames(bulk_present_ave_4) %in% attribute_table_tax_merged$ASV_ID], c(seq(from = 0.75, to = 0.95, by = 0.05),0.99))
+
+all_am_pos <- make_adjacency_matrix(bulk_present_ave_4[,colnames(bulk_present_ave_4) %in% attribute_table_tax_merged$ASV_ID], correlation = 0.85)
+all_am_neg <- make_adjacency_matrix(bulk_present_ave_4[,colnames(bulk_present_ave_4) %in% attribute_table_tax_merged$ASV_ID], correlation = -0.85)
+
+all_el_pos <- make_edge_list(all_am_pos)
+all_el_neg <- make_edge_list(all_am_neg)
+
+all_el_all <- rbind(cbind(all_el_pos,rep("pos",dim(all_el_pos)[1])),
+                    cbind(all_el_neg,rep("neg",dim(all_el_neg)[1])))
+
+ASV_with_patterns <- unique(c(total_LSR, total_ESR, total_B))
+
+total_LSR_no_overlap <- attribute_table_merged$ASV_ID[which(attribute_table_merged$Ecology %in% c("LSR", "LSR_M", "LSR_P"))]
+total_ESR_no_overlap <- attribute_table_merged$ASV_ID[which(attribute_table_merged$Ecology %in% c("ESR", "ESR_M", "ESR_P"))]
+total_B_no_overlap <- attribute_table_merged$ASV_ID[which(attribute_table_merged$Ecology == "B")]
+
+
+# posative #
+pos_total_LSR_B <- intersect(which(all_el_pos[,1] %in% total_LSR_no_overlap),
+                         which(all_el_pos[,2] %in% total_B_no_overlap))
+
+pos_total_B_LSR <- intersect(which(all_el_pos[,2] %in% total_LSR_no_overlap),
+                         which(all_el_pos[,1] %in% total_B_no_overlap))
+
+pos_total_LSR_ESR <- intersect(which(all_el_pos[,1] %in% total_LSR_no_overlap),
+                           which(all_el_pos[,2] %in% total_ESR_no_overlap))
+
+pos_total_ESR_LSR <- intersect(which(all_el_pos[,2] %in% total_LSR_no_overlap),
+                           which(all_el_pos[,1] %in% total_ESR_no_overlap))
+
+pos_total_B_ESR <- intersect(which(all_el_pos[,1] %in% total_ESR_no_overlap),
+                         which(all_el_pos[,2] %in% total_B_no_overlap))
+
+pos_total_ESR_B <- intersect(which(all_el_pos[,2] %in% total_ESR_no_overlap),
+                         which(all_el_pos[,1] %in% total_B_no_overlap))
+
+pos_total_LSR_LSR <- intersect(which(all_el_pos[,2] %in% total_LSR_no_overlap),
+                           which(all_el_pos[,1] %in% total_LSR_no_overlap))
+
+pos_total_ESR_ESR <- intersect(which(all_el_pos[,2] %in% total_ESR_no_overlap),
+                           which(all_el_pos[,1] %in% total_ESR_no_overlap))
+
+pos_total_B_B <- intersect(which(all_el_pos[,2] %in% total_B_no_overlap),
+                       which(all_el_pos[,1] %in% total_B_no_overlap))
+
+dim(all_el_pos)[1]
+
+LSR_B_positive <- (length(pos_total_LSR_B) + length(pos_total_B_LSR)) / dim(all_el_pos)[1]
+LSR_ESR_positive <- (length(pos_total_LSR_ESR) + length(pos_total_ESR_LSR)) / dim(all_el_pos)[1]
+ESR_B_positive <- (length(pos_total_ESR_B) + length(pos_total_B_ESR)) / dim(all_el_pos)[1]
+
+LSR_LSR_positive <- length(pos_total_LSR_LSR) / dim(all_el_pos)[1]
+ESR_ESR_positive <- length(pos_total_ESR_ESR) / dim(all_el_pos)[1]
+B_B_positive <- length(pos_total_B_B) / dim(all_el_pos)[1]
+
+percent_of_positive_correlations <- c(LSR_B_positive,LSR_ESR_positive,ESR_B_positive,LSR_LSR_positive,ESR_ESR_positive,B_B_positive)
+names(percent_of_positive_correlations) <- c("LSR_B", "LSR_ESR", "ESR_B", "LSR_LSR", "ESR_ESR", "B_B")
+
+
+
+# Negative #
+total_LSR_B <- intersect(which(all_el_neg[,1] %in% total_LSR_no_overlap),
+                         which(all_el_neg[,2] %in% total_B_no_overlap))
+
+total_B_LSR <- intersect(which(all_el_neg[,2] %in% total_LSR_no_overlap),
+                         which(all_el_neg[,1] %in% total_B_no_overlap))
+
+total_LSR_ESR <- intersect(which(all_el_neg[,1] %in% total_LSR_no_overlap),
+                           which(all_el_neg[,2] %in% total_ESR_no_overlap))
+
+total_ESR_LSR <- intersect(which(all_el_neg[,2] %in% total_LSR_no_overlap),
+                           which(all_el_neg[,1] %in% total_ESR_no_overlap))
+
+total_B_ESR <- intersect(which(all_el_neg[,1] %in% total_ESR_no_overlap),
+                         which(all_el_neg[,2] %in% total_B_no_overlap))
+
+total_ESR_B <- intersect(which(all_el_neg[,2] %in% total_ESR_no_overlap),
+                         which(all_el_neg[,1] %in% total_B_no_overlap))
+
+total_LSR_LSR <- intersect(which(all_el_neg[,2] %in% total_LSR_no_overlap),
+                           which(all_el_neg[,1] %in% total_LSR_no_overlap))
+
+total_ESR_ESR <- intersect(which(all_el_neg[,2] %in% total_ESR_no_overlap),
+                           which(all_el_neg[,1] %in% total_ESR_no_overlap))
+
+total_B_B <- intersect(which(all_el_neg[,2] %in% total_B_no_overlap),
+                           which(all_el_neg[,1] %in% total_B_no_overlap))
+
+
+dim(all_el_neg)[1]
+
+LSR_B_negative <- (length(total_LSR_B) + length(total_B_LSR)) / dim(all_el_neg)[1]
+LSR_ESR_negative <- (length(total_LSR_ESR) + length(total_ESR_LSR)) / dim(all_el_neg)[1]
+ESR_B_negative <- (length(total_ESR_B) + length(total_B_ESR)) / dim(all_el_neg)[1]
+
+LSR_LSR_negative <- length(total_LSR_LSR) / dim(all_el_neg)[1]
+ESR_ESR_negative <- length(total_ESR_ESR) / dim(all_el_neg)[1]
+B_B_negative <- length(total_B_B) / dim(all_el_neg)[1]
+
+percent_of_negative_correlations <- c(LSR_B_negative,LSR_ESR_negative,ESR_B_negative,LSR_LSR_negative,ESR_ESR_negative,B_B_negative)
+names(percent_of_negative_correlations) <- c("LSR_B", "LSR_ESR", "ESR_B", "LSR_LSR", "ESR_ESR", "B_B")
+
+
+
+colnames(all_el_all) <- c("source", "target", "edge_attribute")
+
+
+write.table(all_el_all, file="/mnt/nfs/bioinfdata/ngs2/ME2/raaijmakers_group/beno/edge_list_LSR_ESR_B_CSS.txt", quote=FALSE, row.names=FALSE, col.names=TRUE)
+write.table(all_el_pos, file="/mnt/nfs/bioinfdata/ngs2/ME2/raaijmakers_group/beno/edge_list_pos_LSR_ESR_B_CSS.txt", quote=FALSE, row.names=FALSE, col.names=TRUE)
+write.table(all_el_neg, file="/mnt/nfs/bioinfdata/ngs2/ME2/raaijmakers_group/beno/edge_list_neg_LSR_ESR_B_CSS.txt", quote=FALSE, row.names=FALSE, col.names=TRUE)
